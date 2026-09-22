@@ -131,6 +131,15 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- Cucumber : injection Spring dans les step definitions (nécessaire
+             pour @CucumberContextConfiguration, utilisé par le scénario E2E). -->
+        <dependency>
+            <groupId>io.cucumber</groupId>
+            <artifactId>cucumber-spring</artifactId>
+            <version>${cucumber.version}</version>
+            <scope>test</scope>
+        </dependency>
+
         <!-- Cucumber : moteur d'exécution basé sur la plateforme JUnit 5 -->
         <dependency>
             <groupId>io.cucumber</groupId>
