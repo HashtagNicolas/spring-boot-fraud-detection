@@ -1,0 +1,35 @@
+# Un seul broker Kafka en mode KRaft (sans ZooKeeper), pour le développement
+# local uniquement. Les tests (mvn clean test) n'en ont pas besoin : ils
+# utilisent un broker Kafka embarqué dans la JVM de test (@EmbeddedKafka).
+#
+# Démarrage : docker compose up -d
+# Arrêt     : docker compose down
+
+services:
+  kafka:
+    image: apache/kafka:latest
+    container_name: fraud-detection-kafka
+    ports:
+      # Port exposé à l'hôte : c'est celui que l'application (exécutée hors
+      # conteneur) utilise via spring.kafka.bootstrap-servers=localhost:9092.
+      - "9092:9092"
+    environment:
+      # Mode KRaft combiné : ce nœud unique joue à la fois le rôle de broker
+      # et de contrôleur (pas de ZooKeeper, pas de cluster multi-nœuds).
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+      # Listener client sur 9092 (exposé à l'hôte) + listener interne du
+      # contrôleur sur 9093 (non exposé). advertised.listeners=localhost:9092
+      # permet à l'application, qui tourne sur la machine hôte, de se
+      # reconnecter correctement après la découverte initiale du broker.
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+
+      # Facteurs de réplication à 1 : cohérent avec un cluster à un seul nœud.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
