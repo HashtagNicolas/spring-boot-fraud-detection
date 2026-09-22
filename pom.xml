@@ -83,6 +83,14 @@
             <artifactId>spring-boot-starter-kafka</artifactId>
         </dependency>
 
+        <!-- Kafka Streams : topologie de détection de fraude (FraudDetectionTopology),
+             en remplacement de l'historique en mémoire du consommateur classique.
+             Version gérée par le BOM Spring Boot, alignée sur kafka-clients. -->
+        <dependency>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka-streams</artifactId>
+        </dependency>
+
         <!-- Endpoints de supervision (santé, métriques...) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

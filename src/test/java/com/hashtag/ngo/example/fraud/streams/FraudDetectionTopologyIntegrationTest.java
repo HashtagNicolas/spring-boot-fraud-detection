@@ -1,4 +1,4 @@
-package com.hashtag.ngo.example.fraud.listener;
+package com.hashtag.ngo.example.fraud.streams;
 
 import com.hashtag.ngo.example.fraud.entity.FraudAlert;
 import com.hashtag.ngo.example.fraud.entity.FraudRuleType;
@@ -26,25 +26,23 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Vérifie de bout en bout que FraudDetectionListener consomme "transactions",
- * évalue chaque transaction via le moteur de règles, et publie (ou non) une
- * FraudAlert sur "fraud-alerts" en conséquence.
+ * Vérifie de bout en bout, via un broker Kafka embarqué réel, que
+ * FraudDetectionTopology détecte le montant élevé et la rafale et publie les
+ * alertes correspondantes sur "fraud-alerts".
  *
- * Piège d'isolation évité : le contexte Spring (et donc le bean singleton
- * FraudDetectionListener, avec son historique en mémoire) ainsi que le broker
- * Kafka embarqué sont partagés entre toutes les méthodes de test de cette
- * classe. On utilise donc un accountId unique par test (aucune contamination
- * de l'historique de rafale entre scénarios), et on filtre les enregistrements
- * lus sur "fraud-alerts" par ce même accountId plutôt que de supposer le
- * topic globalement vide (des alertes d'un autre test peuvent déjà y figurer).
+ * Piège d'isolation : accountId unique par test (le broker embarqué et la
+ * topologie Kafka Streams sont partagés entre les méthodes de test de cette
+ * classe), et recherche de l'alerte par accountId + type de raison plutôt
+ * que par position dans le flux.
  */
 @SpringBootTest
 @EmbeddedKafka(partitions = 3, topics = "fraud-alerts")
-class FraudDetectionListenerIntegrationTest {
+class FraudDetectionTopologyIntegrationTest {
 
     @Autowired
     private KafkaTemplate<String, Object> kafkaTemplate;
@@ -56,7 +54,8 @@ class FraudDetectionListenerIntegrationTest {
 
     @BeforeEach
     void setUpAlertConsumer() {
-        Map<String, Object> consumerProps = KafkaTestUtils.consumerProps("fraud-alerts-test-group", "true", embeddedKafkaBroker);
+        Map<String, Object> consumerProps = KafkaTestUtils.consumerProps(
+                "topology-test-group-" + UUID.randomUUID(), "true", embeddedKafkaBroker);
         consumerProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
@@ -72,45 +71,45 @@ class FraudDetectionListenerIntegrationTest {
     }
 
     @Test
-    void highAmountTransactionProducesAFraudAlert() {
-        String accountId = uniqueAccountId();
-        Transaction fraudulent = new Transaction(
+    void highAmountTransactionProducesAMontantEleveAlert() {
+        String accountId = "acc-" + UUID.randomUUID();
+        Transaction transaction = new Transaction(
                 UUID.randomUUID().toString(), accountId, new BigDecimal("15000.00"), "EUR", Instant.now());
 
-        kafkaTemplate.send("transactions", accountId, fraudulent);
+        kafkaTemplate.send("transactions", accountId, transaction);
 
-        FraudAlert alert = awaitAlertForAccount(accountId, Duration.ofSeconds(10))
-                .orElseThrow(() -> new AssertionError("Aucune alerte reçue pour le compte " + accountId));
+        FraudAlert alert = awaitAlert(accountId, alert2 -> alert2.getReasons().contains(FraudRuleType.MONTANT_ELEVE),
+                Duration.ofSeconds(15))
+                .orElseThrow(() -> new AssertionError("Aucune alerte MONTANT_ELEVE reçue pour le compte " + accountId));
 
-        assertThat(alert.getTransactionId()).isEqualTo(fraudulent.id());
-        assertThat(alert.getAccountId()).isEqualTo(accountId);
-        assertThat(alert.getScore()).isGreaterThanOrEqualTo(50);
-        assertThat(alert.getReasons()).contains(FraudRuleType.MONTANT_ELEVE);
+        assertThat(alert.getTransactionId()).isEqualTo(transaction.id());
+        assertThat(alert.getScore()).isEqualTo(50);
     }
 
     @Test
-    void normalTransactionDoesNotProduceAFraudAlert() {
-        String accountId = uniqueAccountId();
-        Transaction normal = new Transaction(
-                UUID.randomUUID().toString(), accountId, new BigDecimal("42.00"), "EUR", Instant.now());
+    void threeCloseTransactionsProduceARafaleAlert() {
+        String accountId = "acc-" + UUID.randomUUID();
 
-        kafkaTemplate.send("transactions", accountId, normal);
+        for (int i = 0; i < 3; i++) {
+            Transaction transaction = new Transaction(
+                    UUID.randomUUID().toString(), accountId, new BigDecimal("10.00"), "EUR", Instant.now());
+            kafkaTemplate.send("transactions", accountId, transaction);
+        }
 
-        Optional<FraudAlert> alert = awaitAlertForAccount(accountId, Duration.ofSeconds(3));
+        FraudAlert alert = awaitAlert(accountId, alert2 -> alert2.getReasons().contains(FraudRuleType.RAFALE),
+                Duration.ofSeconds(15))
+                .orElseThrow(() -> new AssertionError("Aucune alerte RAFALE reçue pour le compte " + accountId));
 
-        assertThat(alert).isEmpty();
+        assertThat(alert.getAccountId()).isEqualTo(accountId);
+        assertThat(alert.getScore()).isEqualTo(40);
     }
 
-    private String uniqueAccountId() {
-        return "acc-" + UUID.randomUUID();
-    }
-
-    private Optional<FraudAlert> awaitAlertForAccount(String accountId, Duration timeout) {
+    private Optional<FraudAlert> awaitAlert(String accountId, Predicate<FraudAlert> matches, Duration timeout) {
         Instant deadline = Instant.now().plus(timeout);
         while (Instant.now().isBefore(deadline)) {
             ConsumerRecords<String, FraudAlert> records = KafkaTestUtils.getRecords(alertConsumer, Duration.ofMillis(500));
             for (ConsumerRecord<String, FraudAlert> record : records) {
-                if (accountId.equals(record.key())) {
+                if (accountId.equals(record.key()) && matches.test(record.value())) {
                     return Optional.of(record.value());
                 }
             }

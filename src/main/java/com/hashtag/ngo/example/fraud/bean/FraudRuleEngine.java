@@ -1,22 +1,36 @@
 package com.hashtag.ngo.example.fraud.bean;
 
-import com.hashtag.ngo.example.fraud.entity.FraudDecision;
 import com.hashtag.ngo.example.fraud.entity.Transaction;
 
-import java.util.List;
+import java.math.BigDecimal;
+import java.time.Duration;
 
 /**
- * Évalue une transaction candidate au regard de l'historique récent du même
- * compte, et produit une décision de fraude explicable (score + règles
- * déclenchées).
+ * Prédicats et seuils purs de détection de fraude. Depuis l'introduction de
+ * la topologie Kafka Streams (FraudDetectionTopology), ce moteur n'évalue
+ * plus lui-même de décision globale (pas d'historique en mémoire) : il
+ * expose uniquement les règles élémentaires que la topologie assemble en
+ * deux détecteurs indépendants (montant élevé, rafale).
  */
 public interface FraudRuleEngine {
 
     /**
-     * @param accountHistory transactions récentes du même compte que candidate
-     *                       (candidate elle-même n'y figure pas), utilisées
-     *                       pour la détection de rafale
-     * @param candidate      transaction à évaluer
+     * Règle "montant élevé" (stateless) : vrai si le montant est strictement
+     * supérieur au seuil.
      */
-    FraudDecision evaluate(List<Transaction> accountHistory, Transaction candidate);
+    boolean isHighAmount(Transaction transaction);
+
+    BigDecimal highAmountThreshold();
+
+    int highAmountScore();
+
+    /**
+     * Nombre minimal de transactions (candidate comprise) déclenchant la
+     * règle de rafale au sein de la fenêtre {@link #burstWindow()}.
+     */
+    int burstMinCount();
+
+    Duration burstWindow();
+
+    int burstScore();
 }

@@ -34,6 +34,32 @@ spring:
         # qui limite les classes que l'en-tête est autorisé à instancier.
         spring.json.trusted.packages: com.hashtag.ngo.example.fraud.entity
 
+    streams:
+      # Identifiant de l'application Kafka Streams : sert de préfixe aux
+      # topics internes (changelogs des stores d'agrégation, repartitions...)
+      # et de group.id pour la consommation - doit rester stable dans le
+      # temps pour une même application en production.
+      application-id: fraud-detection-streams
+      properties:
+        # Une alerte de fraude doit partir au plus vite, pas être retenue par
+        # défaut jusqu'à 30 secondes (commit.interval.ms par défaut) dans le
+        # cache d'agrégation de Kafka Streams. On désactive ce cache et on
+        # réduit l'intervalle de commit pour un comportement quasi temps réel
+        # (au prix d'un débit de sortie plus élevé sur de gros volumes).
+        commit.interval.ms: 100
+        cache.max.bytes.buffering: 0
+        # Répertoire d'état unique à chaque démarrage (${random.uuid}, résolu
+        # une fois par contexte Spring) plutôt qu'un chemin fixe partagé.
+        # Nécessaire en test : plusieurs contextes Spring (un par
+        # configuration @EmbeddedKafka/@AutoConfigureMockMvc distincte)
+        # peuvent rester actifs simultanément dans la même JVM (cache de
+        # contexte de test), et Kafka Streams refuse de démarrer une seconde
+        # instance sur un répertoire d'état déjà verrouillé par une autre.
+        # Compromis accepté en production aussi : au redémarrage, l'état est
+        # entièrement restauré depuis les topics de changelog Kafka plutôt
+        # que depuis un cache local tiède - plus lent, mais toujours correct.
+        state.dir: ${java.io.tmpdir}/kafka-streams/fraud-detection-streams-${random.uuid}
+
   # Base de données H2 embarquée, utilisée pour stocker les cas de fraude détectés
   datasource:
     url: jdbc:h2:mem:frauddb;DB_CLOSE_DELAY=-1

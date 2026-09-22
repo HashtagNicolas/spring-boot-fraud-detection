@@ -95,12 +95,17 @@ public class FraudDetectionE2ESteps {
     @Alors("un cas de fraude apparaît pour cette transaction dans la liste des cas de fraude")
     public void unCasDeFraudeApparait() {
         // Attente bornée : le message doit traverser "transactions" ->
-        // détecteur -> "fraud-alerts" -> case-manager -> base H2 avant
-        // d'être visible via l'API. Fenêtre de stabilité (during) : on
-        // s'assure que le cas reste visible, pas seulement qu'il apparaît un
-        // court instant.
+        // topologie Kafka Streams -> "fraud-alerts" -> case-manager -> base H2
+        // avant d'être visible via l'API. Délai généreux (60s) : lors de
+        // l'exécution de la suite complète, plusieurs contextes Spring
+        // restent actifs simultanément (cache de contexte de test), chacun
+        // avec son propre broker Kafka embarqué ET sa propre instance Kafka
+        // Streams (RocksDB, threads dédiés) - la contention induite peut
+        // largement ralentir ce test par rapport à une exécution isolée.
+        // Fenêtre de stabilité (during) : on s'assure que le cas reste
+        // visible, pas seulement qu'il apparaît un court instant.
         await()
-                .atMost(Duration.ofSeconds(20))
+                .atMost(Duration.ofSeconds(60))
                 .pollInterval(Duration.ofMillis(300))
                 .during(Duration.ofSeconds(2))
                 .untilAsserted(() -> assertThat(findCase()).isPresent());

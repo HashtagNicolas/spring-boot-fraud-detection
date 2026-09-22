@@ -14,6 +14,7 @@ analysées en temps réel par un moteur de règles pour détecter des fraudes.
 - [Tester](#tester)
 - [Endpoints REST](#endpoints-rest)
 - [Sécurité](#sécurité)
+- [Kafka Streams](#kafka-streams)
 - [Robustesse](#robustesse)
 - [Étapes de construction du projet](#étapes-de-construction-du-projet)
 - [Intégration continue](#intégration-continue)
@@ -51,14 +52,19 @@ pannes transitoires.
                     │   topic "transactions"         │  3 partitions
                     │   clé = accountId               │
                     └───────────────┬───────────────┘
-                                    │ groupId = fraud-detector
+                                    │ application-id = fraud-detection-streams
                                     ▼
-                        ┌───────────────────────┐
-                        │ FraudDetectionListener │  (listener)
-                        │  → FraudRuleEngine     │  montant élevé, rafale
-                        └───────────┬───────────┘
-                                    │ si score de fraude atteint
-                                    ▼
+                    ┌───────────────────────────────────────┐
+                    │      FraudDetectionTopology (Streams)  │
+                    │  ┌───────────────────┐ ┌──────────────┐│
+                    │  │ détecteur montant  │ │  détecteur   ││
+                    │  │ élevé (stateless)  │ │  rafale      ││
+                    │  │                    │ │ (stateful,   ││
+                    │  │                    │ │  fenêtré)    ││
+                    │  └─────────┬──────────┘ └──────┬───────┘│
+                    └────────────┼───────────────────┼────────┘
+                                 │ chacun publie sa propre alerte
+                                 ▼                   ▼
                     ┌───────────────────────────────┐
                     │   topic "fraud-alerts"         │  3 partitions
                     │   clé = accountId               │
@@ -89,8 +95,8 @@ pannes transitoires.
 |-----------------------------|-----------------------------------------------------------------------|
 | `TransactionController`     | Reçoit les transactions via REST, valide, délègue au service          |
 | `TransactionService`        | Génère id/horodatage, publie sur `transactions` (clé = accountId)     |
-| `FraudRuleEngine`           | Logique pure de scoring (aucune dépendance Kafka/JPA)                 |
-| `FraudDetectionListener`    | Consomme `transactions`, évalue via le moteur, publie une alerte       |
+| `FraudRuleEngine`           | Prédicats et seuils purs (aucune dépendance Kafka/JPA), utilisés par la topologie |
+| `FraudDetectionTopology`    | Topologie Kafka Streams : deux détecteurs indépendants (montant élevé, rafale) lisant `transactions` et publiant sur `fraud-alerts` |
 | `NotificationListener`      | Consomme `fraud-alerts`, simule une notification (log)                |
 | `CaseManagementListener`    | Consomme `fraud-alerts`, persiste le cas (idempotent)                 |
 | `FraudCaseController`       | Expose les cas de fraude persistés en lecture (authentification requise)   |
@@ -105,11 +111,11 @@ consommation).
 
 ### Topics Kafka
 
-| Topic                | Partitions | Clé         | Producteur              | Consommateurs (groupId)              |
-|-----------------------|-----------:|-------------|--------------------------|----------------------------------------|
-| `transactions`        | 3          | accountId   | API REST                 | `fraud-detector`                       |
-| `fraud-alerts`        | 3          | accountId   | `FraudDetectionListener` | `notifier`, `case-manager`             |
-| `fraud-alerts.DLT`    | 1          | (aucune, -1)| gestion d'erreur Kafka   | -                                       |
+| Topic                | Partitions | Clé         | Producteur                   | Consommateurs (groupId/application-id) |
+|-----------------------|-----------:|-------------|-------------------------------|-------------------------------------------|
+| `transactions`        | 3          | accountId   | API REST                      | `fraud-detection-streams` (Kafka Streams) |
+| `fraud-alerts`        | 3          | accountId   | `FraudDetectionTopology`      | `notifier`, `case-manager`                |
+| `fraud-alerts.DLT`    | 1          | (aucune, -1)| gestion d'erreur Kafka         | -                                          |
 
 La clé de partition des transactions est **`accountId`** (et non l'id de la
 transaction) afin que Kafka garantisse l'ordre des événements d'un même
@@ -117,32 +123,32 @@ compte au sein d'une partition - indispensable pour la règle de rafale.
 
 ## Règles de fraude
 
-Le moteur de règles (`FraudRuleEngineImpl`) calcule un score **explicite**
-(somme des points des règles déclenchées) à partir de la transaction évaluée
-et de l'historique récent du compte :
+Deux détecteurs **indépendants** (option retenue depuis l'introduction de
+Kafka Streams, cf. [Kafka Streams](#kafka-streams)) évaluent chaque
+transaction et publient chacun leur propre alerte s'ils se déclenchent :
 
-| Règle          | Condition                                                        | Points |
-|-----------------|-------------------------------------------------------------------|-------:|
-| Montant élevé   | Montant strictement supérieur à 10 000 €                          | +50    |
-| Rafale          | Au moins 3 transactions (candidate comprise) en 5 minutes glissantes, même compte | +40    |
+| Détecteur      | Type                | Condition                                                        | Score alerte |
+|-----------------|---------------------|-------------------------------------------------------------------|-------:|
+| Montant élevé   | stateless           | Montant strictement supérieur à 10 000 €                          | 50     |
+| Rafale          | stateful (fenêtré)  | Au moins 3 transactions (candidate comprise) sur le même compte dans une fenêtre de 5 minutes | 40     |
 
-**Seuil de fraude : score ≥ 50.**
+Contrairement à une version antérieure de ce projet, il n'y a **plus de score
+cumulé ni de seuil global** : une transaction à la fois volumineuse et faisant
+partie d'une rafale produit **deux alertes distinctes** (une par détecteur),
+chacune avec sa propre raison et son propre score, plutôt qu'une alerte unique
+combinant les deux signaux. C'est le prix de la simplicité de deux détecteurs
+indépendants, l'option retenue ici plutôt qu'une jointure de flux recombinant
+les deux signaux en une décision unique.
 
-Ce seuil est volontairement fixé à 50 et non à 40 ou 90 : un signal fort
-(montant élevé) suffit **à lui seul** à qualifier une fraude, tandis qu'un
-signal modéré (rafale) est *suspect mais insuffisant seul* - il doit se
-combiner avec un autre signal pour franchir le seuil. C'est ce mécanisme
-d'**accumulation de points** qui distingue ce moteur d'une simple liste de
-règles booléennes indépendantes.
-
-La fenêtre de rafale est fermée `[candidate - 5min, candidate]` : une
-transaction vieille d'exactement 5 minutes compte encore.
+Les seuils et scores sont centralisés dans `FraudRuleEngine`
+(`bean.FraudRuleEngine` / `bean.impl.FraudRuleEngineImpl`), consommé
+directement par `FraudDetectionTopology` pour construire les deux détecteurs.
 
 ## Stack technique
 
 - **Java 25**
 - **Spring Boot 4.1** (`spring-boot-starter-web`, `-validation`, `-data-jpa`, `-actuator`, `-security`)
-- **Spring Kafka 4.1** / **Apache Kafka clients 4.2**
+- **Spring Kafka 4.1** / **Apache Kafka clients 4.2** / **Kafka Streams 4.2**
 - **JJWT 0.12** (génération/validation des JWT, HMAC)
 - **H2** (base embarquée, persistance des cas de fraude)
 - **Jackson** (JSON, avec le module `jsr310` pour les types `java.time`)
@@ -203,8 +209,9 @@ via `@EmbeddedKafka` (spring-kafka-test), qui crée un cluster Kafka
 La suite couvre :
 
 - des tests unitaires purs (moteur de règles, sans Spring ni Kafka) ;
+- un test de topologie Kafka Streams sans broker (`TopologyTestDriver`) ;
 - des tests d'intégration `@EmbeddedKafka` par composant (producteur,
-  détecteur, notification, gestion des cas, dead-letter) ;
+  topologie de détection, notification, gestion des cas, dead-letter) ;
 - des scénarios **Cucumber** (BDD, en français) : règles de fraude
   (`fraud_rules.feature`) et un scénario **bout en bout**
   (`fraud_detection_e2e.feature`) qui exerce la chaîne complète API → Kafka →
@@ -312,6 +319,64 @@ app:
 > il doit provenir d'une variable d'environnement ou d'un coffre-fort de
 > secrets (Vault, AWS Secrets Manager...), jamais être committé en clair.
 
+## Kafka Streams
+
+La détection de fraude n'est plus assurée par un `@KafkaListener` classique
+maintenant un historique en mémoire (approche des versions antérieures), mais
+par une véritable topologie **Kafka Streams** (`FraudDetectionTopology`,
+activée via `@EnableKafkaStreams`, application-id `fraud-detection-streams`) :
+
+```
+KStream<String, Transaction> "transactions"
+        │
+        ├── détecteur montant élevé (stateless)
+        │     filter(amount > 10 000)
+        │     → FraudAlert(MONTANT_ELEVE, 50)
+        │     → to("fraud-alerts")
+        │
+        └── détecteur rafale (stateful)
+              groupByKey()
+              .windowedBy(TimeWindows.ofSizeWithNoGrace(5 min))  // tumbling
+              .aggregate(...)  // compte + id de la dernière transaction
+              .filter(count >= 3)
+              → FraudAlert(RAFALE, 40)
+              → to("fraud-alerts")
+```
+
+**Pourquoi Kafka Streams plutôt qu'un historique en mémoire ?** L'ancien
+`FraudDetectionListener` maintenait une `ConcurrentHashMap` locale par compte,
+perdue au redémarrage de l'instance et jamais partagée entre plusieurs
+instances de l'application. L'agrégation Kafka Streams, elle, est un état
+**distribué et tolérant aux pannes** : il est sauvegardé dans des topics de
+changelog internes à Kafka, donc reconstruit automatiquement après un
+redémarrage ou une réaffectation de partition.
+
+**Fenêtres tumbling, pas glissantes - un compromis assumé.** `TimeWindows`
+découpe le temps en fenêtres fixes de 5 minutes non chevauchantes (ex.
+10:00-10:05, 10:05-10:10...), alignées sur l'epoch. Ce n'est **pas
+équivalent** à une fenêtre glissante « 5 dernières minutes à partir de
+maintenant » : trois transactions en 6 secondes à cheval sur une frontière de
+fenêtre (ex. à 10:04:58, 10:04:59 et 10:05:01) tombent dans deux fenêtres
+différentes et peuvent donc ne PAS être détectées comme une rafale, alors
+qu'une fenêtre glissante (`SlidingWindows`, disponible dans Kafka Streams)
+l'aurait détectée. Ce compromis est documenté et testé explicitement
+(`FraudDetectionTopologyTest.transactionsSpanningTwoTumblingWindowsDoNotCombineIntoARafaleAlert`) :
+il est accepté ici pour la simplicité de l'API `TimeWindows`, au prix d'une
+sensibilité aux rafales situées pile sur une frontière de fenêtre.
+
+**Latence de l'agrégation.** Par défaut, Kafka Streams met en cache les mises
+à jour d'agrégation jusqu'à 30 secondes (`commit.interval.ms`) avant de les
+émettre en aval, ce qui retarderait la publication d'une alerte de rafale.
+`cache.max.bytes.buffering=0` et `commit.interval.ms=100` désactivent ce
+cache pour un comportement quasi temps réel, cohérent avec le besoin métier
+(voir `application.yml`).
+
+Tests dédiés :
+- `FraudDetectionTopologyTest` : `TopologyTestDriver`, sans broker, avec
+  contrôle total des horodatages pour tester précisément le fenêtrage ;
+- `FraudDetectionTopologyIntegrationTest` : `@EmbeddedKafka`, bout en bout
+  avec un vrai broker.
+
 ## Robustesse
 
 - **Retries + dead-letter** : un `DefaultErrorHandler` (Spring Kafka) est
@@ -342,6 +407,7 @@ Le projet a été construit incrémentalement, chaque étape restant verte
 | **P7** | Tests E2E Cucumber (bout en bout) et règles d'architecture ArchUnit |
 | **P8** | Documentation (ce README) et `docker-compose.yml` pour Kafka en local |
 | **P9** | Sécurité : authentification JWT stateless sur `/api/v1/**`, `POST /auth/token` |
+| **P10** | Remplacement de l'historique en mémoire par une topologie Kafka Streams (détecteurs indépendants, agrégation fenêtrée) |
 
 ## Intégration continue
 
