@@ -2,6 +2,7 @@ package com.hashtag.ngo.example.fraud.api;
 
 import com.hashtag.ngo.example.fraud.bean.TransactionService;
 import com.hashtag.ngo.example.fraud.entity.Transaction;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -24,8 +25,8 @@ public class TransactionController {
     }
 
     @PostMapping
-    public ResponseEntity<Void> registerTransaction(@RequestBody Transaction transaction) {
-        transactionService.submit(transaction);
-        return ResponseEntity.accepted().build();
+    public ResponseEntity<TransactionAccepted> registerTransaction(@Valid @RequestBody TransactionRequest request) {
+        Transaction transaction = transactionService.submit(request.accountId(), request.amount(), request.currency());
+        return ResponseEntity.accepted().body(new TransactionAccepted(transaction.id()));
     }
 }

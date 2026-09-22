@@ -59,6 +59,14 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
+        <!-- Bean Validation (Hibernate Validator) : valide les DTO d'entrée
+             de l'API REST (ex. TransactionRequest) via les annotations
+             jakarta.validation (@NotBlank, @Positive...) et @Valid. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
         <!-- Jackson : sérialisation/désérialisation JSON des événements Kafka
              (transactions, alertes de fraude). Déjà apporté transitivement par
              spring-boot-starter-web, mais déclaré explicitement car il est
@@ -66,6 +74,13 @@
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <!-- Module Jackson pour les types java.time (Instant...), requis par le
+             (dé)sérialiseur JSON de Spring Kafka pour l'horodatage des transactions. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
         </dependency>
 
         <!-- Persistance JPA, utilisée pour enregistrer les cas de fraude détectés -->
@@ -89,6 +104,15 @@
         <dependency>
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Support de test MockMvc (@AutoConfigureMockMvc). En Spring Boot 4,
+             ce support est un module séparé de spring-boot-starter-test,
+             miroir du starter web principal (spring-boot-starter-webmvc). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc-test</artifactId>
             <scope>test</scope>
         </dependency>
 
