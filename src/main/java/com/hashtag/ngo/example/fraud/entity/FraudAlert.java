@@ -37,8 +37,10 @@ public class FraudAlert {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(nullable = false)
     private String transactionId;
 
+    @Column(nullable = false)
     private String accountId;
 
     // Règles ayant contribué à la décision de fraude, pour traçabilité.

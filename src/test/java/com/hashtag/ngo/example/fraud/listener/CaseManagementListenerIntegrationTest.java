@@ -64,9 +64,40 @@ class CaseManagementListenerIntegrationTest {
         });
     }
 
+    @Test
+    void duplicateDeliveryOfTheSameAlertIsPersistedOnlyOnce() {
+        // Simule la sémantique "au moins une fois" de Kafka : la même alerte
+        // métier (même transactionId) est livrée deux fois au consommateur
+        // (ex. redémarrage du consommateur avant validation de l'offset).
+        String transactionId = UUID.randomUUID().toString();
+        String accountId = "acc-" + UUID.randomUUID();
+
+        FraudAlert alert = new FraudAlert(
+                transactionId, accountId, List.of(FraudRuleType.MONTANT_ELEVE), 50, Instant.now());
+
+        kafkaTemplate.send("fraud-alerts", accountId, alert);
+        kafkaTemplate.send("fraud-alerts", accountId, alert);
+
+        // .during(...) vérifie que le compte reste stable à 1 pendant toute
+        // cette fenêtre, et pas seulement au premier instant où il l'atteint :
+        // sans cela, un test qui vérifierait juste "== 1" pourrait réussir
+        // simplement parce que la seconde livraison n'a pas encore été traitée.
+        await()
+                .atMost(Duration.ofSeconds(15))
+                .pollInterval(Duration.ofMillis(200))
+                .during(Duration.ofSeconds(3))
+                .untilAsserted(() -> assertThat(countByTransactionId(transactionId)).isEqualTo(1));
+    }
+
     private Optional<FraudAlert> findByTransactionId(String transactionId) {
         return fraudAlertRepository.findAll().stream()
                 .filter(candidate -> transactionId.equals(candidate.getTransactionId()))
                 .findFirst();
+    }
+
+    private long countByTransactionId(String transactionId) {
+        return fraudAlertRepository.findAll().stream()
+                .filter(candidate -> transactionId.equals(candidate.getTransactionId()))
+                .count();
     }
 }
