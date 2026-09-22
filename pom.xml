@@ -32,10 +32,11 @@
         <!-- Version du JDK utilisée pour la compilation et l'exécution -->
         <java.version>25</java.version>
 
-        <!-- Cucumber et ArchUnit ne sont pas gérés par le BOM Spring Boot,
-             leurs versions doivent donc être précisées explicitement. -->
+        <!-- Cucumber, ArchUnit et JJWT ne sont pas gérés par le BOM Spring
+             Boot, leurs versions doivent donc être précisées explicitement. -->
         <cucumber.version>7.20.1</cucumber.version>
         <archunit.version>1.4.1</archunit.version>
+        <jjwt.version>0.12.6</jjwt.version>
     </properties>
 
     <dependencies>
@@ -43,6 +44,35 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- Authentification/autorisation, ici configurée en JWT stateless
+             (cf. security.SecurityConfig) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
+        <!-- JJWT : génération et validation des jetons JWT (HMAC). jjwt-api
+             est nécessaire à la compilation ; jjwt-impl et jjwt-jackson ne le
+             sont qu'à l'exécution (implémentation + (dé)sérialisation JSON
+             des claims, réutilisant Jackson 2 déjà présent pour Kafka). -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+            <version>${jjwt.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
         </dependency>
 
         <!-- Kafka Spring : starter (auto-configuration) + client producteur/consommateur.

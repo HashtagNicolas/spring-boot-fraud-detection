@@ -58,6 +58,16 @@ app:
       fraud-alerts: fraud-alerts
       fraud-alerts-dlt: fraud-alerts.DLT
 
+  security:
+    jwt:
+      # Secret HMAC utilisé pour signer/valider les JWT (JwtServiceImpl).
+      # ATTENTION : valeur de démonstration en clair dans ce fichier, à
+      # CHANGER EN PRODUCTION - à externaliser via une variable d'environnement
+      # ou un coffre-fort de secrets (Vault, AWS Secrets Manager...), jamais
+      # committée en clair dans le contrôle de version.
+      secret: "changeit-ceci-est-un-secret-de-demonstration-a-remplacer-en-production-0123456789"
+      expiration-minutes: 60
+
 management:
   endpoints:
     web:

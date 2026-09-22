@@ -7,7 +7,8 @@ Fonctionnalité: Détection de fraude bout en bout
   fraud-alerts -> case-manager -> base H2 -> GET /api/v1/fraud-cases.
 
   Scénario: Une transaction à montant élevé devient un cas de fraude visible
-    Etant donné un nouveau compte bancaire
+    Etant donné je suis authentifié
+    Et un nouveau compte bancaire
     Quand je soumets une transaction de "15000.00" EUR sur ce compte via l'API REST
     Alors la transaction est acceptée
     Et un cas de fraude apparaît pour cette transaction dans la liste des cas de fraude

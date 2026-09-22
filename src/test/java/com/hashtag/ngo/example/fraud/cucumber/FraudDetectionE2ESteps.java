@@ -2,6 +2,7 @@ package com.hashtag.ngo.example.fraud.cucumber;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.hashtag.ngo.example.fraud.api.AuthRequest;
 import com.hashtag.ngo.example.fraud.api.FraudCaseView;
 import com.hashtag.ngo.example.fraud.api.TransactionAccepted;
 import com.hashtag.ngo.example.fraud.api.TransactionRequest;
@@ -9,6 +10,7 @@ import io.cucumber.java.fr.Alors;
 import io.cucumber.java.fr.Etantdonné;
 import io.cucumber.java.fr.Quand;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -42,8 +44,22 @@ public class FraudDetectionE2ESteps {
     // nécessaire pour désérialiser le champ Instant "detectedAt" de FraudCaseView.
     private final ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
+    private String token;
     private String accountId;
     private String transactionId;
+
+    @Etantdonné("je suis authentifié")
+    public void jeSuisAuthentifie() throws Exception {
+        String requestBody = objectMapper.writeValueAsString(new AuthRequest("demo", "demo123"));
+
+        MvcResult result = mockMvc.perform(post("/auth/token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        token = objectMapper.readTree(result.getResponse().getContentAsString()).get("token").asText();
+    }
 
     @Etantdonné("un nouveau compte bancaire")
     public void unNouveauCompteBancaire() {
@@ -60,6 +76,7 @@ public class FraudDetectionE2ESteps {
                 new TransactionRequest(accountId, new BigDecimal(amount), "EUR"));
 
         MvcResult result = mockMvc.perform(post("/api/v1/transactions")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isAccepted())
@@ -98,7 +115,8 @@ public class FraudDetectionE2ESteps {
     }
 
     private Optional<FraudCaseView> findCase() throws Exception {
-        MvcResult result = mockMvc.perform(get("/api/v1/fraud-cases"))
+        MvcResult result = mockMvc.perform(get("/api/v1/fraud-cases")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
                 .andExpect(status().isOk())
                 .andReturn();
 

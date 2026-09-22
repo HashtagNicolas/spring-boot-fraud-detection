@@ -56,7 +56,8 @@ class ArchitectureTest {
     // (interfaces de service + implémentations *.impl) ; entity (modèle de
     // domaine pur, sans dépendance vers les autres couches) ; repository
     // (accès Spring Data JPA) ; listener (adaptateurs Kafka entrants) ;
-    // config (câblage Spring/Kafka).
+    // config (câblage Spring/Kafka) ; security (filtre JWT + configuration
+    // Spring Security, s'appuie sur bean.JwtService).
     @ArchTest
     static final ArchRule layers_are_respected =
             layeredArchitecture()
@@ -67,13 +68,15 @@ class ArchitectureTest {
                     .layer("Repository").definedBy("..repository..")
                     .layer("Listener").definedBy("..listener..")
                     .layer("Config").definedBy("..config..")
+                    .layer("Security").definedBy("..security..")
 
                     // api : point d'entrée, n'est jamais dépendu par les autres couches.
                     .whereLayer("Api").mayNotBeAccessedByAnyLayer()
-                    // bean (interfaces + impl) : utilisé par l'API et les listeners Kafka.
-                    .whereLayer("Bean").mayOnlyBeAccessedByLayers("Api", "Listener")
+                    // bean (interfaces + impl) : utilisé par l'API, les listeners Kafka
+                    // et le filtre/la configuration de sécurité (JwtService).
+                    .whereLayer("Bean").mayOnlyBeAccessedByLayers("Api", "Listener", "Security")
                     // entity : modèle de domaine, utilisé par toutes les couches
-                    // applicatives sauf config (câblage technique uniquement).
+                    // applicatives sauf config et security (câblage technique uniquement).
                     .whereLayer("Entity").mayOnlyBeAccessedByLayers("Api", "Bean", "Repository", "Listener")
                     // repository : accès aux données, réservé à la couche bean (impl).
                     .whereLayer("Repository").mayOnlyBeAccessedByLayers("Bean")
@@ -81,6 +84,9 @@ class ArchitectureTest {
                     .whereLayer("Listener").mayNotBeAccessedByAnyLayer()
                     // config : câblage Spring/Kafka, consommé par bean (impl) et listener.
                     .whereLayer("Config").mayOnlyBeAccessedByLayers("Bean", "Listener")
+                    // security : câblage Spring Security, jamais dépendu ailleurs
+                    // (les filtres/configurations sont détectés par Spring, pas importés).
+                    .whereLayer("Security").mayNotBeAccessedByAnyLayer()
 
-                    .as("les couches api/bean/entity/repository/listener/config ne doivent être accédées que par les couches autorisées");
+                    .as("les couches api/bean/entity/repository/listener/config/security ne doivent être accédées que par les couches autorisées");
 }

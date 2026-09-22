@@ -13,6 +13,7 @@ analysées en temps réel par un moteur de règles pour détecter des fraudes.
 - [Démarrer le projet](#démarrer-le-projet)
 - [Tester](#tester)
 - [Endpoints REST](#endpoints-rest)
+- [Sécurité](#sécurité)
 - [Robustesse](#robustesse)
 - [Étapes de construction du projet](#étapes-de-construction-du-projet)
 - [Intégration continue](#intégration-continue)
@@ -35,7 +36,10 @@ pannes transitoires.
 ## Architecture
 
 ```
+                    POST /auth/token (demo/demo123) → JWT
+                                    │
                          POST /api/v1/transactions
+                         Authorization: Bearer <JWT>
                                     │
                                     ▼
                         ┌───────────────────────┐
@@ -89,7 +93,10 @@ pannes transitoires.
 | `FraudDetectionListener`    | Consomme `transactions`, évalue via le moteur, publie une alerte       |
 | `NotificationListener`      | Consomme `fraud-alerts`, simule une notification (log)                |
 | `CaseManagementListener`    | Consomme `fraud-alerts`, persiste le cas (idempotent)                 |
-| `FraudCaseController`       | Expose les cas de fraude persistés en lecture (démo, sans authentification) |
+| `FraudCaseController`       | Expose les cas de fraude persistés en lecture (authentification requise)   |
+| `AuthController`            | `POST /auth/token` : émet un JWT pour le compte de démonstration          |
+| `JwtService`                | Génère et valide les JWT (HMAC)                                        |
+| `JwtAuthenticationFilter` / `SecurityConfig` | Vérifient le jeton sur chaque requête `/api/v1/**` (stateless) |
 
 Les groupes de consommateurs `notifier` et `case-manager` réalisent un
 **fan-out** : chaque alerte de fraude est livrée intégralement aux deux
@@ -134,8 +141,9 @@ transaction vieille d'exactement 5 minutes compte encore.
 ## Stack technique
 
 - **Java 25**
-- **Spring Boot 4.1** (`spring-boot-starter-web`, `-validation`, `-data-jpa`, `-actuator`)
+- **Spring Boot 4.1** (`spring-boot-starter-web`, `-validation`, `-data-jpa`, `-actuator`, `-security`)
 - **Spring Kafka 4.1** / **Apache Kafka clients 4.2**
+- **JJWT 0.12** (génération/validation des JWT, HMAC)
 - **H2** (base embarquée, persistance des cas de fraude)
 - **Jackson** (JSON, avec le module `jsr310` pour les types `java.time`)
 - **JUnit 5**, **AssertJ**, **spring-kafka-test** (`@EmbeddedKafka`)
@@ -202,15 +210,26 @@ La suite couvre :
   (`fraud_detection_e2e.feature`) qui exerce la chaîne complète API → Kafka →
   base de données → API, via `@CucumberContextConfiguration` ;
 - des règles **ArchUnit** vérifiant le respect des couches
-  (`api`/`bean`/`entity`/`repository`/`listener`/`config`) et la convention
-  interface/implémentation (`*Impl` dans un package `.impl`).
+  (`api`/`bean`/`entity`/`repository`/`listener`/`config`/`security`) et la
+  convention interface/implémentation (`*Impl` dans un package `.impl`).
 
 ## Endpoints REST
+
+Tous les endpoints `/api/v1/**` nécessitent un jeton JWT (voir
+[Sécurité](#sécurité)). Récupérer d'abord un jeton :
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8080/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{ "username": "demo", "password": "demo123" }' \
+  | jq -r .token)
+```
 
 ### Soumettre une transaction
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/transactions \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
         "accountId": "acc-123",
@@ -226,12 +245,14 @@ Réponse `202 Accepted` (id et horodatage générés côté serveur) :
 ```
 
 Une requête invalide (`accountId` vide, `amount` négatif ou nul...) renvoie
-`400 Bad Request` avec le détail des champs en erreur.
+`400 Bad Request` avec le détail des champs en erreur. Une requête sans
+jeton (ou avec un jeton invalide/expiré) renvoie `401 Unauthorized`.
 
 ### Consulter les cas de fraude détectés
 
 ```bash
-curl http://localhost:8080/api/v1/fraud-cases
+curl http://localhost:8080/api/v1/fraud-cases \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 ```json
@@ -247,10 +268,49 @@ curl http://localhost:8080/api/v1/fraud-cases
 ]
 ```
 
-> **Aucune authentification n'est appliquée sur cet endpoint** : il est
-> prévu pour la démonstration et le développement uniquement. Une mise en
-> production nécessiterait a minima une authentification/autorisation avant
-> d'exposer ces données sensibles.
+> Cet endpoint reste sans autorisation fine (tout utilisateur authentifié y
+> a accès, quel que soit son rôle) : suffisant pour cette démonstration, mais
+> une vraie mise en production distinguerait les rôles (ex. "analyste
+> fraude") avant d'exposer ces données sensibles.
+
+## Sécurité
+
+L'API est protégée par une authentification **JWT stateless** : aucune
+session HTTP, aucun cookie - chaque requête doit porter son propre jeton, ce
+qui permet de faire passer à l'échelle horizontalement l'application sans
+partager d'état de session entre instances.
+
+- `POST /auth/token` est **ouvert** : il échange des identifiants de
+  démonstration (`demo` / `demo123` - il n'y a pas de base d'utilisateurs
+  derrière) contre un JWT signé (HMAC), valable 1 heure par défaut.
+- Toute requête vers `/api/v1/**` doit porter l'en-tête
+  `Authorization: Bearer <jeton>`. `JwtAuthenticationFilter` vérifie la
+  signature et l'expiration du jeton avant de peupler le contexte de
+  sécurité ; en son absence ou s'il est invalide, la requête est rejetée
+  avec **`401 Unauthorized`** (et non `403 Forbidden`, le comportement par
+  défaut de Spring Security en l'absence d'authentification) - configuré via
+  `HttpStatusEntryPoint(UNAUTHORIZED)` dans `SecurityConfig`, pour rester
+  cohérent avec la sémantique HTTP ("non authentifié" vs "authentifié mais
+  non autorisé").
+- CSRF est désactivé : cette protection n'a de sens que pour une
+  authentification par cookie de session, pas pour un jeton porté
+  explicitement dans un en-tête par un client non-navigateur.
+
+Le secret HMAC de signature est externalisé dans `application.yml`
+(`app.security.jwt.secret`) :
+
+```yaml
+app:
+  security:
+    jwt:
+      secret: "changeit-ceci-est-un-secret-de-demonstration-a-remplacer-en-production-..."
+      expiration-minutes: 60
+```
+
+> **À changer en production** : ce secret est un exemple en clair dans le
+> dépôt, acceptable uniquement pour une démonstration locale. En production,
+> il doit provenir d'une variable d'environnement ou d'un coffre-fort de
+> secrets (Vault, AWS Secrets Manager...), jamais être committé en clair.
 
 ## Robustesse
 
@@ -281,6 +341,7 @@ Le projet a été construit incrémentalement, chaque étape restant verte
 | **P6** | Robustesse : retries, dead-letter topic, idempotence du case-manager |
 | **P7** | Tests E2E Cucumber (bout en bout) et règles d'architecture ArchUnit |
 | **P8** | Documentation (ce README) et `docker-compose.yml` pour Kafka en local |
+| **P9** | Sécurité : authentification JWT stateless sur `/api/v1/**`, `POST /auth/token` |
 
 ## Intégration continue
 

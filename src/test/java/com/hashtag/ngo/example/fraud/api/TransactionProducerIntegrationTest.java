@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.support.serializer.JsonDeserializer;
@@ -19,6 +20,7 @@ import org.springframework.kafka.test.EmbeddedKafkaBroker;
 import org.springframework.kafka.test.context.EmbeddedKafka;
 import org.springframework.kafka.test.utils.KafkaTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -81,6 +83,7 @@ class TransactionProducerIntegrationTest {
                 new TransactionRequest(accountId, new BigDecimal("125.50"), "EUR"));
 
         mockMvc.perform(post("/api/v1/transactions")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + obtainToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isAccepted());
@@ -109,10 +112,23 @@ class TransactionProducerIntegrationTest {
                 new TransactionRequest("", new BigDecimal("-5"), ""));
 
         mockMvc.perform(post("/api/v1/transactions")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + obtainToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isBadRequest());
 
         assertThat(KafkaTestUtils.getRecords(consumer, Duration.ofSeconds(2)).isEmpty()).isTrue();
+    }
+
+    private String obtainToken() throws Exception {
+        String requestBody = objectMapper.writeValueAsString(new AuthRequest("demo", "demo123"));
+
+        MvcResult result = mockMvc.perform(post("/auth/token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        return objectMapper.readTree(result.getResponse().getContentAsString()).get("token").asText();
     }
 }
