@@ -35,7 +35,7 @@
         <!-- Cucumber et ArchUnit ne sont pas gérés par le BOM Spring Boot,
              leurs versions doivent donc être précisées explicitement. -->
         <cucumber.version>7.20.1</cucumber.version>
-        <archunit.version>1.3.0</archunit.version>
+        <archunit.version>1.4.1</archunit.version>
     </properties>
 
     <dependencies>
