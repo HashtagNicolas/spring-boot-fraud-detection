@@ -1,0 +1,61 @@
+# Configuration de l'application "détection de fraude en temps réel".
+
+spring:
+  application:
+    name: fraud-detection
+
+  kafka:
+    # En production/développement : localhost:9092.
+    # En test, la propriété "spring.embedded.kafka.brokers" est injectée
+    # automatiquement par @EmbeddedKafka (spring-kafka-test) et prend le
+    # dessus grâce au mécanisme de valeur par défaut ci-dessous.
+    bootstrap-servers: ${spring.embedded.kafka.brokers:localhost:9092}
+
+    producer:
+      # Clé de message : simple chaîne de caractères (ex. identifiant de compte)
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # Valeur de message : événement métier sérialisé en JSON
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+    consumer:
+      group-id: fraud-detection-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        # Désérialisation JSON typée : type par défaut utilisé si le message
+        # ne porte pas d'en-tête de type, et paquets autorisés à être
+        # instanciés par le désérialiseur (mesure de sécurité de JsonDeserializer).
+        spring.json.trusted.packages: com.hashtag.ngo.example.fraud.entity
+        spring.json.value.default.type: com.hashtag.ngo.example.fraud.entity.Transaction
+        spring.json.use.type.headers: false
+
+  # Base de données H2 embarquée, utilisée pour stocker les cas de fraude détectés
+  datasource:
+    url: jdbc:h2:mem:frauddb;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  jpa:
+    # Désactivé pour éviter que la session Hibernate ne reste ouverte
+    # jusqu'au rendu de la vue (non pertinent pour une API REST).
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+
+# Noms des topics Kafka, externalisés pour ne pas les coder en dur dans les
+# classes Java (KafkaTopicsConfig les lit pour créer les topics au démarrage).
+app:
+  kafka:
+    topics:
+      transactions: transactions
+      fraud-alerts: fraud-alerts
+      fraud-alerts-dlt: fraud-alerts.DLT
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
