@@ -23,12 +23,16 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
-        # Désérialisation JSON typée : type par défaut utilisé si le message
-        # ne porte pas d'en-tête de type, et paquets autorisés à être
-        # instanciés par le désérialiseur (mesure de sécurité de JsonDeserializer).
+        # Désérialisation basée sur l'en-tête Kafka __TypeId__, ajouté
+        # automatiquement à la production par JsonSerializer (comportement
+        # par défaut, non désactivé côté producteur). Indispensable dès lors
+        # que plusieurs types d'événements transitent sur des topics
+        # consommés par la même JVM (Transaction sur "transactions", puis
+        # FraudAlert produite en retour sur "fraud-alerts") : un unique type
+        # par défaut ne suffirait plus à désambiguïser. trusted.packages
+        # reste nécessaire : c'est la mesure de sécurité de JsonDeserializer
+        # qui limite les classes que l'en-tête est autorisé à instancier.
         spring.json.trusted.packages: com.hashtag.ngo.example.fraud.entity
-        spring.json.value.default.type: com.hashtag.ngo.example.fraud.entity.Transaction
-        spring.json.use.type.headers: false
 
   # Base de données H2 embarquée, utilisée pour stocker les cas de fraude détectés
   datasource:
